@@ -91,6 +91,21 @@ dsw_load_area() {
 }
 
 # True when running inside an SL7 userland (the container, or a native SL7 host).
+# Clean-room ROOT inside the run environment: drop every library dir that carries
+# experiment .rootmap files (ROOT's dictionary autoload) except ROOT's own, and the
+# experiment headers. ROOT still works, but knows only its own classes.
+dsw_clean_room() {
+  local d keep=()
+  for d in ${LD_LIBRARY_PATH//:/ }; do
+    if [ "$d" != "$ROOTSYS/lib" ] && compgen -G "$d/*.rootmap" > /dev/null; then continue; fi
+    keep+=("$d")
+  done
+  LD_LIBRARY_PATH=$(IFS=:; echo "${keep[*]}")
+  export LD_LIBRARY_PATH
+  unset ROOT_INCLUDE_PATH
+  export DSW_CLEAN_ROOM=1
+}
+
 # Replaces this process with `apptainer exec <image> $DSW_SELF "$@"`, binding the
 # default paths that exist plus $DSW_EXTRA_BINDS. Uses $DSW_IMAGE (default if unset).
 dsw_reexec_in_container() {

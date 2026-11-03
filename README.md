@@ -17,16 +17,18 @@ dsw shell                               # interactive, environment set up
 | Command | Does |
 |---|---|
 | `newarea -v <ver> [-q <quals>] [-p <git-url>[#<ref>]]... [--requirements F] [--no-venv] [--no-build] [-j N] <dir>` | Create a new area: `setup dunesw` → `mrb newDev` → `.venv` (+ `pip install -r F`) → `setup_dunesw.sh`, `lar_wrap.sh`, `dunesw_wrap.sh` (still used by the condor tooling) → `git clone` each package into `srcs/` (+ checkout of `ref`) → `mrb uc` → `fullbuild` (only if packages were given). Stops at the first failure. Replaces `create_larsoft_area.sh`, using `git clone` instead of `mrb g`. See `dsw newarea -h` |
-| `where` | Print the detected MRB area (no container) |
+| `where [--home]` | Print the detected MRB area, or with `--home` the dsw repo path (no container) |
 | `info` | Area, product/version/quals, source/build/install dirs, packages + git branch, stack versions |
 | `shell` | Interactive bash: your `~/.bashrc`, then the run environment, `dsw` on `PATH` (so `dsw` commands in the shell skip the container and the setup), and a `[dsw <version>]` prompt prefix |
 | `exec <cmd…>` | Run any command |
 | `build [-l LOG] [-q] [ninja args]` | `ninja -C $MRB_BUILDDIR -k 0 install`. Output is shown live and always saved to a log (default `<area>/logs/build-<time>.log`). At the end it prints error/warning counts, the first matching lines, the log path and `rc=` |
 | `fullbuild [--clean] [-l LOG] [-q] [-j N] [mrb i args]` | `mrbsetenv` + `mrb i -jN --generator=ninja` (N defaults to `nproc`). Reconfigures with CMake. Use it for a new area, after adding a package or `mrb z`, or after `product_deps` changes. `--clean` first runs `mrb uc` + `mrb z` + `mrb zd`, which **wipes the build and install dirs** (replaces `rebuild_larsoft_area.sh`). Logged like `build` (default `<area>/logs/fullbuild-<time>.log`) |
 | `run [-l LOG] [-q] <lar args…>` | `lar` |
-| `root [-l LOG] [-q] <args…>` | `root -l -b -q <args>`. Run macros from files: stdin doesn't get through |
+| `root [--clean-room] [-l LOG] [-q] <args…>` | `root -l -b -q <args>`. Run macros from files: stdin doesn't get through. `--clean-room`: ROOT without the experiment dictionaries and headers (library dirs carrying `.rootmap` files are dropped) |
 | `py [-l LOG] [-q] <args…>` | `python <args>` (area venv if present, otherwise the stack python) |
+| `macro [--clean-room] [-l LOG] [-q] [<name> [args…]]` | Run a bundled ROOT macro from `share/macros` with string arguments; with no name, list them: `read_all` (null test: read every entry of a tree in plain ROOT), `streamer_cmp` (class layout in a file vs the loaded dictionary), `class_checksum` (checksum of a candidate layout; use `--clean-room`), `tree_scan` (entries, branches, first rows) |
 | `ls <file.root>` | List directories, objects, cycles and tree entries (replaces the broken `rootls`) |
+| `fcl-check construct\|dump\|diff …` | Area-wide FHiCL checks: `construct` builds every module of every job fcl (`lar` on `EmptyEvent`, 0 events), `dump` runs `fhicl-dump` on every fcl, and `diff` compares two dump runs (e.g. around a fcl reorganisation). Also warns about fcl files that aren't installed or are stale. See `dsw fcl-check -h` |
 | `compile-check <src-root> --tu <path> [g++ flags]` | Compile one file of another checkout of a package (e.g. a git worktree) with the build's own command from `ninja -t compdb`. Output goes to a temp dir; nothing in the area changes. Extra flags are appended (e.g. `-std=c++20`) |
 
 `-l LOG` also saves the output to LOG and ends with the log path and `rc=`. `-q` (with
@@ -72,6 +74,15 @@ EXTRA_BINDS=/data,/scratch
 VENV=auto        # auto | on | off
 SHELL_RC=on      # off: dsw shell skips ~/.bashrc (if it breaks in SL7)
 ```
+
+## Debugging helpers
+
+- `share/gdb/backtrace.gdb`: batch gdb that prints all-thread backtraces on a crash:
+  `dsw exec gdb -batch -x $(dsw where --home)/share/gdb/backtrace.gdb --args lar -c job.fcl in.root -n 5`
+- `skills/dsw/`: a Claude Code skill that teaches Claude to use dsw, with playbooks for build
+  failures, runtime crashes, FHiCL, ROOT files, ROOT dictionaries, parallel work and art
+  module review. Install by linking it into the skills dir:
+  `ln -s <path>/dsw/skills/dsw ~/.claude/skills/dsw` (or `$CLAUDE_CONFIG_DIR/skills`).
 
 ## Gotchas
 
