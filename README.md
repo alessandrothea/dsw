@@ -26,12 +26,12 @@ dsw shell                               # interactive, environment set up
 | `run [-l LOG] [-q] <lar args…>` | `lar` |
 | `root [-l LOG] [-q] <args…>` | `root -l -b -q <args>`. Run macros from files: stdin doesn't get through |
 | `py [-l LOG] [-q] <args…>` | `python <args>` (area venv if present, otherwise the stack python) |
+| `ls <file.root>` | List directories, objects, cycles and tree entries (replaces the broken `rootls`) |
+| `compile-check <src-root> --tu <path> [g++ flags]` | Compile one file of another checkout of a package (e.g. a git worktree) with the build's own command from `ninja -t compdb`. Output goes to a temp dir; nothing in the area changes. Extra flags are appended (e.g. `-std=c++20`) |
 
 `-l LOG` also saves the output to LOG and ends with the log path and `rc=`. `-q` (with
 `-l`) hides the live output and prints a summary only (for `run`/`root`/`py`, the last
 20 lines). Use it when the output is long, e.g. from scripts or Claude.
-| `ls <file.root>` | List directories, objects, cycles and tree entries (replaces the broken `rootls`) |
-| `compile-check <src-root> --tu <path> [g++ flags]` | Compile one file of another checkout of a package (e.g. a git worktree) with the build's own command from `ninja -t compdb`. Output goes to a temp dir; nothing in the area changes. Extra flags are appended (e.g. `-std=c++20`) |
 
 Exit codes: the command's own; `2` = dsw usage/area error; `3` = environment setup failed.
 
