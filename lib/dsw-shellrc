@@ -1,0 +1,29 @@
+# rcfile for `dsw shell`.
+#   1. the user's ~/.bashrc (aliases, prompt, history...) unless SHELL_RC=off
+#   2. the dunesw run environment, after ~/.bashrc so UPS paths come first in PATH
+#   3. dsw on PATH, so dsw commands run in this shell without a container restart
+#   4. a "[dsw <version>]" prefix on the user's prompt
+_dsw_home=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+source "$_dsw_home/lib/dsw-common.sh"
+unset DSW_SETUP_DONE
+dsw_load_area "$DSW_AREA"
+
+case $DSW_SHELL_RC in
+  off|0) ;;
+  *) [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" ;;
+esac
+
+if dsw_setup run; then
+  # After the UPS setup, which rewrites PATH.
+  source "$_dsw_home/setup_env.sh"
+  _dsw_tag="[dsw $DSW_VERSION]"
+  echo "dsw: $DSW_PRODUCT $DSW_VERSION -q $DSW_QUALS — area $DSW_AREA"
+else
+  _dsw_tag="[dsw SETUP FAILED]"
+fi
+unset _dsw_home
+
+# Prefix the prompt, and keep it prefixed if PROMPT_COMMAND rebuilds PS1.
+_dsw_ps1() { case $PS1 in "$_dsw_tag "*) ;; *) PS1="$_dsw_tag $PS1" ;; esac; }
+_dsw_ps1
+PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}_dsw_ps1"

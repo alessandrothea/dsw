@@ -1,0 +1,201 @@
+#!/bin/bash
+# dsw — run dunesw/LArSoft work from an MRB area inside the FNAL SL7 container.
+# See `dsw help`.
+
+DSW_SELF=$(readlink -f "${BASH_SOURCE[0]}")
+DSW_HOME=$(dirname "$(dirname "$DSW_SELF")")
+source "$DSW_HOME/lib/dsw-common.sh"
+
+usage() {
+  cat <<'EOF'
+usage: dsw [-C <area>] <command> [args...]
+
+Commands (all but `where`/`help` run inside the SL7 container with the area set up):
+  where                          print the detected MRB area (no container)
+  info                           area, product/version/quals, dirs, packages, stack versions
+  shell                          interactive shell with the environment set up
+  exec <cmd> [args...]           run any command
+  build [-l LOG] [-q] [ninja args]  ninja -C $MRB_BUILDDIR -k 0 install; live output,
+                                    always logged (default <area>/logs/), then summary.
+                                    Incremental; run environment (mrbslp).
+  fullbuild [-l LOG] [-q] [-j N] [mrb i args]
+                                    mrbsetenv + mrb i -jN --generator=ninja (N: nproc).
+                                    Reconfigures. For a new area, after mrb g / mrb z,
+                                    or after product_deps changes.
+  run   [-l LOG] [-q] <lar args...> lar
+  root  [-l LOG] [-q] <args...>     root -l -b -q <args>   (macros from files; no stdin)
+  py    [-l LOG] [-q] <args...>     python <args>
+     -l LOG: also save output to LOG and print log path + rc at the end
+     -q:     with -l, don't show output live; print a summary only
+  ls    <file.root>              list a ROOT file (directories, objects, tree entries)
+  compile-check <src-root> --tu <path> [g++ flags...]
+                                 compile one translation unit of a package checkout
+                                 (e.g. a git worktree) with the build's own flags
+
+Area: -C <area>, else $DSW_AREA, else found by searching upward from $PWD.
+Per-area overrides: <area>/.dsw.conf (KEY=VALUE: PRODUCT VERSION QUALS
+UPS_OVERRIDE IMAGE EXTRA_BINDS VENV).
+Exit codes: the command's own, 2 = dsw usage/area error, 3 = environment setup failed.
+EOF
+}
+
+# ---- global options -------------------------------------------------------
+while [ $# -gt 0 ]; do
+  case $1 in
+    -C) [ $# -ge 2 ] || dsw_die "-C needs an argument"; export DSW_AREA=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) dsw_die "unknown option $1 (see dsw help)" ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 1 ] || { usage >&2; exit 2; }
+CMD=$1; shift
+
+case $CMD in
+  help) usage; exit 0 ;;
+  where|info|shell|exec|build|fullbuild|run|root|py|ls|compile-check) ;;
+  *) dsw_die "unknown command '$CMD' (see dsw help)" ;;
+esac
+
+AREA=$(dsw_find_area) || exit 2
+dsw_load_area "$AREA"
+export DSW_AREA
+
+if [ "$CMD" = where ]; then echo "$DSW_AREA"; exit 0; fi
+
+# ---- outside the container: re-run this script inside it --------------------
+if ! dsw_in_sl7; then
+  [ -x "$DSW_APPTAINER" ] || dsw_die "apptainer not found at $DSW_APPTAINER (is /cvmfs mounted?)"
+  binds=()
+  for b in $DSW_BIND_CANDIDATES ${DSW_EXTRA_BINDS//,/ }; do
+    [ -e "$b" ] && binds+=("$b")
+  done
+  bind_arg=$(IFS=,; echo "${binds[*]}")
+  exec "$DSW_APPTAINER" exec -B "$bind_arg" --ipc --pid "$DSW_IMAGE" "$DSW_SELF" "$CMD" "$@"
+fi
+
+# ---- inside the container ------------------------------------------------------
+if [ "$CMD" = shell ]; then
+  exec bash --rcfile "$DSW_HOME/lib/dsw-shellrc" -i
+fi
+
+# fullbuild uses the mrb build environment (mrbsetenv); everything else, including the
+# incremental build, uses the run environment (mrbslp). mrbsetenv rewrites CMake inputs
+# in the build dir, which would make every incremental build reconfigure.
+if [ "$CMD" = fullbuild ]; then dsw_setup build || exit 3; else dsw_setup run || exit 3; fi
+
+# Runs "$@". Without $LOG: execs it. With $LOG: output is shown live and saved to
+# $LOG (with $QUIET=1: saved only), then a summary is printed.
+# $SUMMARY selects the summary: build | tail (tail is skipped when output was shown live).
+run_logged() {
+  if [ -z "$LOG" ]; then
+    [ "$QUIET" = 1 ] && dsw_die "-q needs -l LOG"
+    exec "$@"
+  fi
+  mkdir -p "$(dirname "$LOG")" || dsw_die "cannot create log dir for $LOG"
+  local rc
+  if [ "$QUIET" = 1 ]; then
+    "$@" > "$LOG" 2>&1
+    rc=$?
+  else
+    "$@" 2>&1 | tee "$LOG"
+    rc=${PIPESTATUS[0]}
+    echo "------------------------------------------------------------ dsw summary"
+  fi
+  if [ "$SUMMARY" = build ]; then
+    local nerr nwarn
+    nerr=$(grep -cE "error:|FAILED:" "$LOG")
+    nwarn=$(grep -cE "warning:" "$LOG")
+    echo "errors: $nerr  warnings: $nwarn"
+    grep -nE "error:|FAILED:|warning:" "$LOG" | head -30
+  elif [ "$QUIET" = 1 ]; then
+    tail -20 "$LOG"
+  fi
+  echo "log: $LOG"
+  echo "rc=$rc"
+  return $rc
+}
+
+# Parses optional leading `-l LOG` and `-q` (any order); sets LOG (absolute), QUIET, ARGS.
+parse_log_opt() {
+  LOG= QUIET=0
+  while :; do
+    case ${1:-} in
+      -l) [ $# -ge 2 ] || dsw_die "-l needs a file name"
+          LOG=$(readlink -m "$2"); shift 2 ;;
+      -q) QUIET=1; shift ;;
+      *) break ;;
+    esac
+  done
+  ARGS=("$@")
+}
+
+case $CMD in
+  info)
+    echo "area:     $DSW_AREA"
+    echo "product:  $DSW_PRODUCT $DSW_VERSION -q $DSW_QUALS"
+    echo "image:    $DSW_IMAGE"
+    echo "source:   $MRB_SOURCE"
+    echo "build:    $MRB_BUILDDIR"
+    echo "install:  $MRB_INSTALL"
+    if [ -n "${VIRTUAL_ENV:-}" ]; then echo "venv:     $VIRTUAL_ENV"; else echo "venv:     (none)"; fi
+    echo "packages:"
+    for p in "$MRB_SOURCE"/*/; do
+      p=${p%/}
+      [ -f "$p/CMakeLists.txt" ] || continue
+      br=$(git -C "$p" branch --show-current 2>/dev/null)
+      echo "  ${p##*/}${br:+  [$br]}"
+    done
+    echo "stack:"
+    echo "  $(lar --version 2>/dev/null | head -1)"
+    echo "  root $(root-config --version 2>/dev/null)"
+    echo "  $(g++ --version 2>/dev/null | head -1)"
+    echo "  $(python --version 2>&1)"
+    ;;
+  exec)
+    [ $# -ge 1 ] || dsw_die "exec needs a command"
+    exec "$@"
+    ;;
+  build)
+    parse_log_opt "$@"
+    [ -n "$LOG" ] || LOG=$DSW_AREA/logs/build-$(date +%Y%m%d-%H%M%S).log
+    SUMMARY=build run_logged ninja -C "$MRB_BUILDDIR" -k 0 install "${ARGS[@]}"
+    ;;
+  fullbuild)
+    parse_log_opt "$@"
+    set -- "${ARGS[@]}"
+    jobs=$(nproc)
+    if [ "${1:-}" = "-j" ]; then
+      [ $# -ge 2 ] || dsw_die "-j needs a number"
+      jobs=$2; shift 2
+    fi
+    [ -n "$LOG" ] || LOG=$DSW_AREA/logs/fullbuild-$(date +%Y%m%d-%H%M%S).log
+    cd "$MRB_BUILDDIR" || dsw_die "cannot cd to $MRB_BUILDDIR"
+    SUMMARY=build run_logged mrb i -j"$jobs" --generator=ninja "$@"
+    ;;
+  run)
+    parse_log_opt "$@"
+    SUMMARY=tail run_logged lar "${ARGS[@]}"
+    ;;
+  root)
+    parse_log_opt "$@"
+    SUMMARY=tail run_logged root -l -b -q "${ARGS[@]}"
+    ;;
+  py)
+    parse_log_opt "$@"
+    SUMMARY=tail run_logged python "${ARGS[@]}"
+    ;;
+  ls)
+    [ $# -eq 1 ] || dsw_die "usage: dsw ls <file.root>"
+    f=$(readlink -f "$1") || dsw_die "no such file: $1"
+    [ -f "$f" ] || dsw_die "no such file: $1"
+    exec root -l -b -q "$DSW_HOME/share/dsw_ls.C(\"$f\")"
+    ;;
+  compile-check)
+    [ $# -ge 1 ] || dsw_die "usage: dsw compile-check <src-root> --tu <path> [g++ flags...]"
+    src=$1; shift
+    exec python3 "$DSW_HOME/share/dsw_compile_check.py" \
+      --build-dir "$MRB_BUILDDIR" --source-dir "$MRB_SOURCE" --src-root "$src" "$@"
+    ;;
+esac
