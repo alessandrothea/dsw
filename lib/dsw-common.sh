@@ -91,6 +91,18 @@ dsw_load_area() {
 }
 
 # True when running inside an SL7 userland (the container, or a native SL7 host).
+# Replaces this process with `apptainer exec <image> $DSW_SELF "$@"`, binding the
+# default paths that exist plus $DSW_EXTRA_BINDS. Uses $DSW_IMAGE (default if unset).
+dsw_reexec_in_container() {
+  [ -x "$DSW_APPTAINER" ] || dsw_die "apptainer not found at $DSW_APPTAINER (is /cvmfs mounted?)"
+  local b binds=() bind_arg
+  for b in $DSW_BIND_CANDIDATES ${DSW_EXTRA_BINDS//,/ }; do
+    [ -e "$b" ] && binds+=("$b")
+  done
+  bind_arg=$(IFS=,; echo "${binds[*]}")
+  exec "$DSW_APPTAINER" exec -B "$bind_arg" --ipc --pid "${DSW_IMAGE:-$DSW_DEFAULT_IMAGE}" "$DSW_SELF" "$@"
+}
+
 dsw_in_sl7() {
   [ -n "${APPTAINER_CONTAINER:-}${SINGULARITY_CONTAINER:-}" ] && return 0
   grep -qE 'release 7' /etc/redhat-release 2>/dev/null
@@ -100,7 +112,8 @@ dsw_in_sl7() {
 #   run   (default; everything incl. incremental `build`):
 #          setup_dune.sh -> setup <product> <ver> -q <quals> -> localProducts setup
 #          -> mrbslp -> .venv (if present)
-#   build (only `fullbuild`): setup_dune.sh -> localProducts setup -> mrbsetenv
+#   build (only `fullbuild`): setup_dune.sh -> localProducts setup
+#          [-> mrb uc -> mrb z -> mrb zd, if DSW_CLEAN=1] -> mrbsetenv
 # Quiet: setup output goes to a temporary log that is printed only on failure.
 _dsw_setup_common() {
   DSW_STEP="source $DSW_DUNE_SETUP"
@@ -132,6 +145,13 @@ _dsw_setup_build_steps() {
   _dsw_setup_common || return 1
   DSW_STEP="source $DSW_LP_SETUP"
   source "$DSW_LP_SETUP" || return 1
+  # fullbuild --clean (DSW_CLEAN=1): regenerate srcs/CMakeLists.txt and wipe the build
+  # and install dirs before mrbsetenv. stdin is /dev/null so a prompt fails, not hangs.
+  if [ "${DSW_CLEAN:-0}" = 1 ]; then
+    DSW_STEP="mrb uc"; mrb uc < /dev/null || return 1
+    DSW_STEP="mrb z";  mrb z  < /dev/null || return 1
+    DSW_STEP="mrb zd"; mrb zd < /dev/null || return 1
+  fi
   # mrbsetenv rewrites cetpkg_info.sh, table_deps_* etc. in the build dir (CMake
   # inputs), so it is used only by fullbuild, which reconfigures anyway.
   DSW_STEP="mrbsetenv"

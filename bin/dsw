@@ -5,12 +5,15 @@
 DSW_SELF=$(readlink -f "${BASH_SOURCE[0]}")
 DSW_HOME=$(dirname "$(dirname "$DSW_SELF")")
 source "$DSW_HOME/lib/dsw-common.sh"
+source "$DSW_HOME/lib/dsw-newarea.sh"
 
 usage() {
   cat <<'EOF'
 usage: dsw [-C <area>] <command> [args...]
 
 Commands (all but `where`/`help` run inside the SL7 container with the area set up):
+  newarea -v <ver> [-q <quals>] [-p <git-url>[#<ref>]]... [...] <dir>
+                                 create a new MRB area (see dsw newarea -h)
   where                          print the detected MRB area (no container)
   info                           area, product/version/quals, dirs, packages, stack versions
   shell                          interactive shell with the environment set up
@@ -18,10 +21,12 @@ Commands (all but `where`/`help` run inside the SL7 container with the area set 
   build [-l LOG] [-q] [ninja args]  ninja -C $MRB_BUILDDIR -k 0 install; live output,
                                     always logged (default <area>/logs/), then summary.
                                     Incremental; run environment (mrbslp).
-  fullbuild [-l LOG] [-q] [-j N] [mrb i args]
+  fullbuild [--clean] [-l LOG] [-q] [-j N] [mrb i args]
                                     mrbsetenv + mrb i -jN --generator=ninja (N: nproc).
-                                    Reconfigures. For a new area, after mrb g / mrb z,
-                                    or after product_deps changes.
+                                    Reconfigures. For a new area, after adding a package
+                                    / mrb z, or after product_deps changes.
+                                    --clean: first mrb uc + mrb z + mrb zd (wipes the
+                                    build and install dirs).
   run   [-l LOG] [-q] <lar args...> lar
   root  [-l LOG] [-q] <args...>     root -l -b -q <args>   (macros from files; no stdin)
   py    [-l LOG] [-q] <args...>     python <args>
@@ -55,6 +60,12 @@ CMD=$1; shift
 case $CMD in
   help) usage; exit 0 ;;
   where|info|shell|exec|build|fullbuild|run|root|py|ls|compile-check) ;;
+  newarea)
+    # The only command without an existing area.
+    case " $* " in *" -h "*|*" --help "*) dsw_newarea_usage; exit 0 ;; esac
+    dsw_in_sl7 || dsw_reexec_in_container newarea "$@"
+    dsw_newarea "$@"; exit $?
+    ;;
   *) dsw_die "unknown command '$CMD' (see dsw help)" ;;
 esac
 
@@ -65,15 +76,7 @@ export DSW_AREA
 if [ "$CMD" = where ]; then echo "$DSW_AREA"; exit 0; fi
 
 # ---- outside the container: re-run this script inside it --------------------
-if ! dsw_in_sl7; then
-  [ -x "$DSW_APPTAINER" ] || dsw_die "apptainer not found at $DSW_APPTAINER (is /cvmfs mounted?)"
-  binds=()
-  for b in $DSW_BIND_CANDIDATES ${DSW_EXTRA_BINDS//,/ }; do
-    [ -e "$b" ] && binds+=("$b")
-  done
-  bind_arg=$(IFS=,; echo "${binds[*]}")
-  exec "$DSW_APPTAINER" exec -B "$bind_arg" --ipc --pid "$DSW_IMAGE" "$DSW_SELF" "$CMD" "$@"
-fi
+dsw_in_sl7 || dsw_reexec_in_container "$CMD" "$@"
 
 # ---- inside the container ------------------------------------------------------
 if [ "$CMD" = shell ]; then
@@ -83,7 +86,18 @@ fi
 # fullbuild uses the mrb build environment (mrbsetenv); everything else, including the
 # incremental build, uses the run environment (mrbslp). mrbsetenv rewrites CMake inputs
 # in the build dir, which would make every incremental build reconfigure.
-if [ "$CMD" = fullbuild ]; then dsw_setup build || exit 3; else dsw_setup run || exit 3; fi
+if [ "$CMD" = fullbuild ]; then
+  # --clean acts inside the build setup (before mrbsetenv), so it is taken out here.
+  args=()
+  for a in "$@"; do
+    if [ "$a" = --clean ]; then export DSW_CLEAN=1; else args+=("$a"); fi
+  done
+  set -- "${args[@]}"
+  [ "${DSW_CLEAN:-0}" = 1 ] && dsw_msg "--clean: mrb uc, mrb z, mrb zd (wiping build and install dirs)"
+  dsw_setup build || exit 3
+else
+  dsw_setup run || exit 3
+fi
 
 # Runs "$@". Without $LOG: execs it. With $LOG: output is shown live and saved to
 # $LOG (with $QUIET=1: saved only), then a summary is printed.
