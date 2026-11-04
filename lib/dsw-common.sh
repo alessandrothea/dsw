@@ -64,6 +64,7 @@ dsw_load_area() {
   DSW_UPS_OVERRIDE=$DSW_DEFAULT_UPS_OVERRIDE
   DSW_IMAGE=$DSW_DEFAULT_IMAGE
   DSW_EXTRA_BINDS=
+  DSW_UPS_PRODUCTS=
   DSW_VENV=auto
   DSW_SHELL_RC=on
   local conf=$area/.dsw.conf key val
@@ -80,6 +81,7 @@ dsw_load_area() {
         UPS_OVERRIDE) DSW_UPS_OVERRIDE=$val ;;
         IMAGE) DSW_IMAGE=$val ;;
         EXTRA_BINDS) DSW_EXTRA_BINDS=$val ;;
+        UPS_PRODUCTS) DSW_UPS_PRODUCTS=$val ;;
         VENV) DSW_VENV=$val ;;
         SHELL_RC) DSW_SHELL_RC=$val ;;
         *) dsw_msg "warning: unknown key $key in $conf" ;;
@@ -134,6 +136,12 @@ _dsw_setup_common() {
   DSW_STEP="source $DSW_DUNE_SETUP"
   [ -f "$DSW_DUNE_SETUP" ] || { echo "missing $DSW_DUNE_SETUP (is /cvmfs mounted?)"; return 1; }
   source "$DSW_DUNE_SETUP" || return 1
+  # Extra UPS databases (UPS_PRODUCTS in .dsw.conf, colon-separated) go first on $PRODUCTS,
+  # e.g. a local product area holding a private wirecell build.
+  if [ -n "${DSW_UPS_PRODUCTS:-}" ]; then
+    DSW_STEP="prepend UPS_PRODUCTS to PRODUCTS"
+    export PRODUCTS="$DSW_UPS_PRODUCTS:$PRODUCTS"
+  fi
 }
 
 _dsw_setup_run_steps() {
