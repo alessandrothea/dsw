@@ -27,19 +27,11 @@ dsw_find_area() {
     dsw_is_area "$DSW_AREA" || dsw_die "DSW_AREA=$DSW_AREA is not an MRB area (needs srcs/ and localProducts_*/setup)"
     readlink -f "$DSW_AREA"; return 0
   fi
-  local d c hits
+  local d
   d=$(pwd -P)
+  # $PWD or its nearest ancestor that is an area; subdirectories are never searched.
   while :; do
     if dsw_is_area "$d"; then echo "$d"; return 0; fi
-    hits=()
-    for c in "$d"/*/; do
-      c=${c%/}
-      dsw_is_area "$c" && hits+=("$c")
-    done
-    if [ ${#hits[@]} -eq 1 ]; then echo "${hits[0]}"; return 0; fi
-    if [ ${#hits[@]} -gt 1 ]; then
-      dsw_die "several MRB areas under $d: ${hits[*]##*/} — pick one with -C <area> or DSW_AREA"
-    fi
     [ "$d" = "/" ] && break
     d=$(dirname "$d")
   done

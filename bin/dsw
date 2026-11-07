@@ -46,7 +46,7 @@ Commands (all but `where`/`help` run inside the SL7 container with the area set 
                                  compile one translation unit of a package checkout
                                  (e.g. a git worktree) with the build's own flags
 
-Area: -C <area>, else $DSW_AREA, else found by searching upward from $PWD.
+Area: -C <area>, else $DSW_AREA, else $PWD or its nearest ancestor area (subdirectories are never searched).
 Per-area overrides: <area>/.dsw.conf (KEY=VALUE: PRODUCT VERSION QUALS
 UPS_OVERRIDE IMAGE EXTRA_BINDS UPS_PRODUCTS VENV;
 UPS_PRODUCTS = extra UPS databases, colon-separated, prepended to $PRODUCTS).
